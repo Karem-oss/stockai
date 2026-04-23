@@ -153,66 +153,47 @@ function formatDateLabel(dateStr) {
 
 
 // ─────────────────────────────────────────
-//  YAHOO FINANCE — MONTHLY PRICE HISTORY
+//  YAHOO FINANCE — SINGLE FETCH (prices + overview)
 // ─────────────────────────────────────────
 
-// Fetches 10 years of monthly adjusted-close prices from Yahoo Finance.
-// No API key required. Returns { t: [unix...], c: [prices...] } so
-// extractTenYears() receives the same shape it always expected.
-async function fetchMonthlyPrices(ticker) {
+// One proxy request returns both price history and company metadata.
+// Callers that only need prices (compare) use fetchMonthlyPrices() below.
+async function fetchYahooData(ticker) {
   const url =
     `https://api.allorigins.win/raw?url=${encodeURIComponent(
       `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1mo&range=10y`
     )}`;
 
   const res = await fetch(url);
-
   if (res.status === 404) throw new Error('ticker_not_found');
   if (!res.ok)            throw new Error('network_error');
 
-  const data = await res.json();
-
+  const data   = await res.json();
   const result = data?.chart?.result?.[0];
   if (!result) throw new Error('ticker_not_found');
 
   const timestamps = result.timestamp;
   const prices     = result.indicators?.adjclose?.[0]?.adjclose;
-
   if (!timestamps || !prices) throw new Error('ticker_not_found');
 
-  return { t: timestamps, c: prices };
-}
-
-
-// ─────────────────────────────────────────
-//  YAHOO FINANCE — COMPANY OVERVIEW
-// ─────────────────────────────────────────
-
-// Extracts company metadata from the same Yahoo Finance chart response used
-// for price history. The browser caches the request so there is no extra
-// network cost. Normalizes field names so populateOverviewCard() needs no changes.
-async function fetchOverview(ticker) {
-  const url =
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1mo&range=10y`
-    )}`;
-
-  const res = await fetch(url);
-  if (res.status === 404) throw new Error('ticker_not_found');
-  if (!res.ok)            throw new Error('network_error');
-
-  const data = await res.json();
-  const meta = data?.chart?.result?.[0]?.meta;
-  if (!meta) throw new Error('no_overview');
+  const meta = result.meta || {};
 
   return {
-    Name:                 meta.longName || meta.shortName || ticker,
-    Exchange:             meta.fullExchangeName || meta.exchangeName || '',
-    Sector:               '',   // not included in Yahoo chart meta
-    Industry:             '',
-    // Yahoo returns marketCap as raw dollars — matches what formatMarketCap() expects
-    MarketCapitalization: meta.marketCap || 0,
+    prices: { t: timestamps, c: prices },
+    overview: {
+      Name:                 meta.longName || meta.shortName || ticker,
+      Exchange:             meta.fullExchangeName || meta.exchangeName || '',
+      Sector:               '',
+      Industry:             '',
+      MarketCapitalization: meta.marketCap || 0,
+    },
   };
+}
+
+// Thin wrapper used by handleCompare — returns only the prices shape.
+async function fetchMonthlyPrices(ticker) {
+  const { prices } = await fetchYahooData(ticker);
+  return prices;
 }
 
 
@@ -245,7 +226,7 @@ async function fetchGeminiAnalysis(prompt) {
   const timeout    = setTimeout(() => controller.abort(), 10_000);
 
   const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent` +
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent` +
     `?key=${GEMINI_KEY}`;
 
   try {
@@ -617,31 +598,19 @@ async function handleSearch() {
   aiCard.hidden    = true;
 
   try {
-    // Fire both API requests in parallel — overview failure is non-fatal
-    const [priceResult, overviewResult] = await Promise.allSettled([
-      fetchMonthlyPrices(ticker),
-      fetchOverview(ticker),
-    ]);
-
-    // Price history is required; surface a friendly message for known error codes
-    if (priceResult.status === 'rejected') {
-      const code = priceResult.reason?.message;
-      if (code === 'ticker_not_found') {
-        throw new Error("We couldn't find that ticker. Try AAPL or TSLA.");
-      }
-      if (code === 'api_limit') {
-        throw new Error("API rate limit reached (25 calls/day on free tier). Please wait and try again.");
-      }
+    // One request returns both prices and overview metadata
+    let yahooResult;
+    try {
+      yahooResult = await fetchYahooData(ticker);
+    } catch (e) {
+      if (e.message === 'ticker_not_found') throw new Error("We couldn't find that ticker. Try AAPL or TSLA.");
       throw new Error("Couldn't load data. Check your ticker or try again.");
     }
 
-    const priceData = extractTenYears(priceResult.value);
-    if (priceData.length === 0) {
-      throw new Error("We couldn't find that ticker. Try AAPL or TSLA.");
-    }
+    const priceData = extractTenYears(yahooResult.prices);
+    if (priceData.length === 0) throw new Error("We couldn't find that ticker. Try AAPL or TSLA.");
 
-    // Overview is nice-to-have; fall back to an empty object if it failed
-    const overview = overviewResult.status === 'fulfilled' ? overviewResult.value : {};
+    const overview = yahooResult.overview;
 
     // Populate the overview card and sync watchlist button state
     populateOverviewCard(overview, priceData, ticker);
