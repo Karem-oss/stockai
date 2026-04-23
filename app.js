@@ -161,7 +161,7 @@ function formatDateLabel(dateStr) {
 // extractTenYears() receives the same shape it always expected.
 async function fetchMonthlyPrices(ticker) {
   const url =
-    `https://api.allorigins.win/get?url=${encodeURIComponent(
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(
       `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1mo&range=10y`
     )}`;
 
@@ -170,8 +170,7 @@ async function fetchMonthlyPrices(ticker) {
   if (res.status === 404) throw new Error('ticker_not_found');
   if (!res.ok)            throw new Error('network_error');
 
-  const wrapper = await res.json();
-  const data    = JSON.parse(wrapper.contents);
+  const data = await res.json();
 
   const result = data?.chart?.result?.[0];
   if (!result) throw new Error('ticker_not_found');
@@ -194,7 +193,7 @@ async function fetchMonthlyPrices(ticker) {
 // network cost. Normalizes field names so populateOverviewCard() needs no changes.
 async function fetchOverview(ticker) {
   const url =
-    `https://api.allorigins.win/get?url=${encodeURIComponent(
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(
       `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1mo&range=10y`
     )}`;
 
@@ -202,9 +201,8 @@ async function fetchOverview(ticker) {
   if (res.status === 404) throw new Error('ticker_not_found');
   if (!res.ok)            throw new Error('network_error');
 
-  const wrapper = await res.json();
-  const data    = JSON.parse(wrapper.contents);
-  const meta    = data?.chart?.result?.[0]?.meta;
+  const data = await res.json();
+  const meta = data?.chart?.result?.[0]?.meta;
   if (!meta) throw new Error('no_overview');
 
   return {
