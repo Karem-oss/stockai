@@ -2,7 +2,8 @@
 //  API KEYS — replace these with your real keys
 // ─────────────────────────────────────────
 const FINNHUB_KEY = 'd7kqh5pr01qiqbcvcucgd7kqh5pr01qiqbcvcud0';
-const GEMINI_KEY        = 'AIzaSyACcheKTfArPmzgDN5EHV1K7HlZQ8qJ6mM';
+const GEMINI_KEY  = 'AIzaSyACcheKTfArPmzgDN5EHV1K7HlZQ8qJ6mM';
+const FMP_KEY     = 'demo';
 
 
 // ─────────────────────────────────────────
@@ -153,38 +154,53 @@ function formatDateLabel(dateStr) {
 
 
 // ─────────────────────────────────────────
-//  YAHOO FINANCE — SINGLE FETCH (prices + overview)
+//  FINANCIAL MODELING PREP — PRICE HISTORY
 // ─────────────────────────────────────────
 
-// One proxy request returns both price history and company metadata.
-// Callers that only need prices (compare) use fetchMonthlyPrices() below.
+// Fetches full daily price history from FMP (no proxy needed — CORS supported).
+// Samples to monthly closes and returns { prices: {t,c}, overview } so all
+// downstream code (extractTenYears, charts, AI) stays completely unchanged.
 async function fetchYahooData(ticker) {
   const url =
-    `https://thingproxy.freeboard.io/fetch/` +
-    `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1mo&range=10y`;
+    `https://financialmodelingprep.com/api/v3/historical-price-full/` +
+    `${encodeURIComponent(ticker)}?serietype=line&apikey=${FMP_KEY}`;
 
   const res = await fetch(url);
   if (res.status === 404) throw new Error('ticker_not_found');
   if (!res.ok)            throw new Error('network_error');
 
-  const data   = await res.json();
-  const result = data?.chart?.result?.[0];
-  if (!result) throw new Error('ticker_not_found');
+  const data    = await res.json();
+  const history = data.historical;
+  if (!history || history.length === 0) throw new Error('ticker_not_found');
 
-  const timestamps = result.timestamp;
-  const prices     = result.indicators?.adjclose?.[0]?.adjclose;
-  if (!timestamps || !prices) throw new Error('ticker_not_found');
+  // Filter to last 10 years (FMP returns newest-first, so reverse after filtering)
+  const cutoff = new Date();
+  cutoff.setFullYear(cutoff.getFullYear() - 10);
 
-  const meta = result.meta || {};
+  const filtered = history
+    .filter(d => new Date(d.date + 'T00:00:00') >= cutoff)
+    .reverse();  // now oldest → newest
+
+  if (filtered.length === 0) throw new Error('ticker_not_found');
+
+  // Sample to monthly: iterate oldest→newest so the last write per "YYYY-MM"
+  // key is always the final trading day of that month.
+  const byMonth = {};
+  filtered.forEach(d => { byMonth[d.date.slice(0, 7)] = d; });
+
+  const monthly = Object.keys(byMonth).sort().map(k => byMonth[k]);
 
   return {
-    prices: { t: timestamps, c: prices },
+    prices: {
+      t: monthly.map(d => Math.floor(new Date(d.date + 'T00:00:00').getTime() / 1000)),
+      c: monthly.map(d => d.close),
+    },
     overview: {
-      Name:                 meta.longName || meta.shortName || ticker,
-      Exchange:             meta.fullExchangeName || meta.exchangeName || '',
+      Name:                 data.symbol || ticker,
+      Exchange:             '',
       Sector:               '',
       Industry:             '',
-      MarketCapitalization: meta.marketCap || 0,
+      MarketCapitalization: 0,
     },
   };
 }
