@@ -160,9 +160,8 @@ function formatDateLabel(dateStr) {
 // Callers that only need prices (compare) use fetchMonthlyPrices() below.
 async function fetchYahooData(ticker) {
   const url =
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1mo&range=10y`
-    )}`;
+    `https://thingproxy.freeboard.io/fetch/` +
+    `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1mo&range=10y`;
 
   const res = await fetch(url);
   if (res.status === 404) throw new Error('ticker_not_found');
